@@ -1,16 +1,45 @@
 package main
 
 import (
-  "github.com/gorilla/mux"
   "database/sql"
-  _"github.com/go-sql-driver/mysql"
   "net/http"
 	"encoding/json"
 	"time"
 	"fmt"
 	"io/ioutil"
+	"log"
+	"os"
+	"io"
+
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
 	"github.com/tkanos/gonfig"
 )
+
+type logger struct {
+	debugLogger *log.Logger
+	infoLogger  *log.Logger
+	warnLogger  *log.Logger
+	errorLogger *log.Logger
+	fatalLogger *log.Logger
+}
+
+func (logger *logger) debug(s string, v ...interface{}) {
+	logger.debugLogger.Printf(s, v...)
+}
+func (logger *logger) info(s string, v ...interface{}) {
+	logger.infoLogger.Printf(s, v...)
+}
+func (logger *logger) warn(s string, v ...interface{}) {
+	logger.warnLogger.Printf(s, v...)
+}
+func (logger *logger) error(s string, v ...interface{}) {
+	logger.errorLogger.Printf(s, v...)
+}
+func (logger *logger) fatal(s string, v ...interface{}) {
+	logger.fatalLogger.Printf(s, v...)
+	os.Exit(1)
+}
 
 // Config - конфиг API (config.json)
 type Config struct {
@@ -53,28 +82,61 @@ type Day struct {
   Classes   []Class `json:"classes"`
 }
 
-var db *sql.DB
-var err error
+var (
+	db *sql.DB
+	l logger
+)
 
 func main() {
-	cfg := Config{}
-	err := gonfig.GetConf("config.json", &cfg)
+	// создание логгера
+	logFile, err := os.OpenFile("log.txt", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0666)
 	if err != nil {
-    panic(err.Error())
-  }
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	logMultiwriter := io.MultiWriter(os.Stdout, logFile)
+	l = logger{
+		debugLogger: log.New(logMultiwriter, "[DEBUG] ", log.Ldate|log.Ltime),
+		infoLogger:  log.New(logMultiwriter, "[INFO]  ", log.Ldate|log.Ltime),
+		warnLogger:  log.New(logMultiwriter, "[WARN]  ", log.Ldate|log.Ltime),
+		errorLogger: log.New(logMultiwriter, "[ERROR] ", log.Ldate|log.Ltime),
+		fatalLogger: log.New(logMultiwriter, "[FATAL] ", log.Ldate|log.Ltime),
+	}
+
+	// чтение конфига
+	cfg := Config{}
+	err = gonfig.GetConf("config.json", &cfg)
+	if err != nil {
+		l.fatal("Ошибка при чтении конфига: %s", err)
+	}
+	
+	// подключение к БД
 	db, err = sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", cfg.MySQLUser, cfg.MySQLPassword, cfg.MySQLURL, cfg.MySQLPort, cfg.MySQLDB))
   if err != nil {
-    panic(err.Error())
+    l.fatal("Ошибка при подключении к БД: %s", err)
   }
-  defer db.Close()
+	defer db.Close()
+	
+	// настройка роутера
 	router := mux.NewRouter()
+	router.HandleFunc("/api/groups/", getGroups).Methods("GET")
+	router.HandleFunc("/api/group/{groupName}", getGroup).Methods("GET")
+	router.HandleFunc("/api/classes/{groupName}", getClasses).Methods("GET")
 	router.HandleFunc("/api/classes/{groupName}/{date}", getDay).Methods("GET")
-	// router.HandleFunc("/api/groups/{groupName}", getGroup).Methods("GET")
   router.HandleFunc("/api/groups/{groupName}", updateGroup).Methods("POST")
-  // router.HandleFunc("/api/posts/{id}", getPost).Methods("GET")
-  // router.HandleFunc("/api/posts/{id}", updatePost).Methods("PUT")
-  // router.HandleFunc("/api/groups/{id}", deletePost).Methods("DELETE")
-	http.ListenAndServe(":"+cfg.APIPort, router)
+	http.ListenAndServe(":" + cfg.APIPort, router)
+}
+
+func getGroups(w http.ResponseWriter, r *http.Request) {
+	//todo
+}
+
+func getGroup(w http.ResponseWriter, r *http.Request) {
+	//todo
+}
+
+func getClasses(w http.ResponseWriter, r *http.Request) {
+	//todo
 }
 
 func getDay(w http.ResponseWriter, r *http.Request) {
@@ -137,93 +199,3 @@ func updateGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode("Group has been updated.")
 }
-
-
-// ---------------------------------------------------------------
-// func getPosts(w http.ResponseWriter, r *http.Request) {
-//   w.Header().Set("Content-Type", "application/json")
-//   var posts []Post
-//   result, err := db.Query("SELECT id, title from posts")
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   defer result.Close()
-//   for result.Next() {
-//     var post Post
-//     err := result.Scan(&post.ID, &post.Title)
-//     if err != nil {
-//       panic(err.Error())
-//     }
-//     posts = append(posts, post)
-//   }
-//   json.NewEncoder(w).Encode(posts)
-// }
-// func createPost(w http.ResponseWriter, r *http.Request) {
-//   w.Header().Set("Content-Type", "application/json")
-//   stmt, err := db.Prepare("INSERT INTO posts(title) VALUES(?)")
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   body, err := ioutil.ReadAll(r.Body)
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   keyVal := make(map[string]string)
-//   json.Unmarshal(body, &keyVal)
-//   title := keyVal["title"]
-//   _, err = stmt.Exec(title)
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   fmt.Fprintf(w, "New post was created")
-// }
-// func getPost(w http.ResponseWriter, r *http.Request) {
-//   w.Header().Set("Content-Type", "application/json")
-//   params := mux.Vars(r)
-//   result, err := db.Query("SELECT id, title FROM posts WHERE id = ?", params["id"])
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   defer result.Close()
-//   var post Post
-//   for result.Next() {
-//     err := result.Scan(&post.ID, &post.Title)
-//     if err != nil {
-//       panic(err.Error())
-//     }
-//   }
-//   json.NewEncoder(w).Encode(post)
-// }
-// func updatePost(w http.ResponseWriter, r *http.Request) {
-//   w.Header().Set("Content-Type", "application/json")
-//   params := mux.Vars(r)
-//   stmt, err := db.Prepare("UPDATE posts SET title = ? WHERE id = ?")
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   body, err := ioutil.ReadAll(r.Body)
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   keyVal := make(map[string]string)
-//   json.Unmarshal(body, &keyVal)
-//   newTitle := keyVal["title"]
-//   _, err = stmt.Exec(newTitle, params["id"])
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   fmt.Fprintf(w, "Post with ID = %s was updated", params["id"])
-// }
-// func deletePost(w http.ResponseWriter, r *http.Request) {
-//   w.Header().Set("Content-Type", "application/json")
-//   params := mux.Vars(r)
-//   stmt, err := db.Prepare("DELETE FROM posts WHERE id = ?")
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   _, err = stmt.Exec(params["id"])
-//   if err != nil {
-//     panic(err.Error())
-//   }
-//   fmt.Fprintf(w, "Post with ID = %s was deleted", params["id"])
-// }
