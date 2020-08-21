@@ -1,8 +1,8 @@
 package main
 
 import (
-  "database/sql"
-  "net/http"
+	"database/sql"
+	"net/http"
 	"encoding/json"
 	"time"
 	"fmt"
@@ -79,7 +79,7 @@ type Group struct {
 type Day struct {
 	Date      string `json:"date"`
 	GroupName string `json:"groupName"`
-  Classes   []Class `json:"classes"`
+	Classes   []Class `json:"classes"`
 }
 
 var (
@@ -112,9 +112,9 @@ func main() {
 	
 	// подключение к БД
 	db, err = sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", cfg.MySQLUser, cfg.MySQLPassword, cfg.MySQLURL, cfg.MySQLPort, cfg.MySQLDB))
-  if err != nil {
-    l.fatal("Ошибка при подключении к БД: %s", err)
-  }
+	if err != nil {
+		l.fatal("Ошибка при подключении к БД: %s", err)
+	}
 	defer db.Close()
 	
 	// настройка роутера
@@ -123,7 +123,7 @@ func main() {
 	router.HandleFunc("/api/group/{groupName}", getGroup).Methods("GET")
 	router.HandleFunc("/api/classes/{groupName}", getClasses).Methods("GET")
 	router.HandleFunc("/api/classes/{groupName}/{date}", getDay).Methods("GET")
-  router.HandleFunc("/api/groups/{groupName}", updateGroup).Methods("POST")
+	router.HandleFunc("/api/groups/{groupName}", updateGroup).Methods("POST")
 	http.ListenAndServe(":" + cfg.APIPort, router)
 }
 
@@ -140,52 +140,52 @@ func getClasses(w http.ResponseWriter, r *http.Request) {
 }
 
 func getDay(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
 	var day Day
 	params := mux.Vars(r)
 	day.GroupName = params["groupName"]
 	day.Date, _ = params["date"]
-  result, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ? AND date = ?", day.GroupName, day.Date)
-  if err != nil {
-    panic(err.Error())
-  }
-  defer result.Close()
-  for result.Next() {
+	result, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ? AND date = ?", day.GroupName, day.Date)
+	if err != nil {
+		panic(err.Error())
+	}
+	defer result.Close()
+	for result.Next() {
 		var currentClass Class
-    err := result.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
-    if err != nil {
-      panic(err.Error())
+		err := result.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
+		if err != nil {
+			panic(err.Error())
 		}
 		currentClass.Date, _ = time.Parse("2006-01-02", day.Date)
 		day.Classes = append(day.Classes, currentClass)
 	}
-	w.Header().Set("Content-Type", "application/json")
-  json.NewEncoder(w).Encode(day)
+	json.NewEncoder(w).Encode(day)
 }
 
 func updateGroup(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	stmt, err := db.Prepare("DELETE FROM groups WHERE groupName = ?")
-  if err != nil {
-    panic(err.Error())
+	if err != nil {
+		panic(err.Error())
 	}
-  _, err = stmt.Exec(params["groupName"])
-  if err != nil {
-    panic(err.Error())
+	_, err = stmt.Exec(params["groupName"])
+	if err != nil {
+		panic(err.Error())
 	}
-  stmt, err = db.Prepare("INSERT INTO groups (groupName, institute, studyLevel, studyForm, numberOfSubgroups, lastUpdate) VALUES (?, ?, ?, ?, ?, ?)")
-  if err != nil {
-    panic(err.Error())
+	stmt, err = db.Prepare("INSERT INTO groups (groupName, institute, studyLevel, studyForm, numberOfSubgroups, lastUpdate) VALUES (?, ?, ?, ?, ?, ?)")
+	if err != nil {
+		panic(err.Error())
 	}
-  body, err := ioutil.ReadAll(r.Body)
-  if err != nil {
-    panic(err.Error())
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		panic(err.Error())
 	}
-  var group Group
-  json.Unmarshal(body, &group)
-  _, err = stmt.Exec(group.GroupName, group.Institute, group.StudyLevel, group.StudyForm, group.NumberOfSubgroups, group.LastUpdate)
-  if err != nil {
-    panic(err.Error())
+	var group Group
+	json.Unmarshal(body, &group)
+	_, err = stmt.Exec(group.GroupName, group.Institute, group.StudyLevel, group.StudyForm, group.NumberOfSubgroups, group.LastUpdate)
+	if err != nil {
+		panic(err.Error())
 	}
 	for _, class := range group.Classes {
 		stmt, err = db.Prepare("INSERT INTO classesFullTime (groupName, discipline, date, time, classType, professor, subgroup, location, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
