@@ -224,7 +224,7 @@ func getGroup(w http.ResponseWriter, r *http.Request) {
 		l.error("Ошибка при формировании группы: %s", err)
 		return
 	}
-	resultClasses, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ?", params["groupName"])
+	resultClasses, err := db.Query("SELECT date, discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ?", params["groupName"])
 	if err != nil {
 		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 		l.error("Ошибка при выполнении запроса к БД: %s", err)
@@ -233,12 +233,14 @@ func getGroup(w http.ResponseWriter, r *http.Request) {
 	defer resultClasses.Close()
 	for resultClasses.Next() {
 		var currentClass Class
-		err := resultClasses.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
+		var dateString string
+		err := resultClasses.Scan(&dateString, &currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
 		if err != nil {
 			json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании списка занятий."})
 			l.error("Ошибка при формировании списка занятий: %s", err)
 			return
 		}
+		currentClass.Date, _ = time.Parse("2006-01-02T15:04:05Z", dateString)
 		group.Classes = append(group.Classes, currentClass)
 	}
 	json.NewEncoder(w).Encode(group)
@@ -259,7 +261,7 @@ func getClasses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var classes []Class
-	resultClasses, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ?", params["groupName"])
+	resultClasses, err := db.Query("SELECT date, discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ?", params["groupName"])
 	if err != nil {
 		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 		l.error("Ошибка при выполнении запроса к БД: %s", err)
@@ -268,12 +270,14 @@ func getClasses(w http.ResponseWriter, r *http.Request) {
 	defer resultClasses.Close()
 	for resultClasses.Next() {
 		var currentClass Class
-		err := resultClasses.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
+		var dateString string
+		err := resultClasses.Scan(&dateString, &currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
 		if err != nil {
 			json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании списка занятий."})
 			l.error("Ошибка при формировании списка занятий: %s", err)
 			return
 		}
+		currentClass.Date, _ = time.Parse("2006-01-02T15:04:05Z", dateString)
 		classes = append(classes, currentClass)
 	}
 	json.NewEncoder(w).Encode(classes)
