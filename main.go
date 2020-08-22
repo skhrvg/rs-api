@@ -95,10 +95,11 @@ type Day struct {
 	Classes   []Class `json:"classes"`
 }
 
-// ErrorResponse - возвращаемая ошибка
-type ErrorResponse struct {
-	Err     string `json:"error"`
-	Message string `json:"message"`
+// SimpleResponse - возвращаемая ошибка
+type SimpleResponse struct {
+	Successful bool   `json:"successful"`
+	Err        string `json:"error"`
+	Message    string `json:"message"`
 }
 
 var (
@@ -172,12 +173,12 @@ func checkDate(date string) (bool) {
 }
 
 func getGroups(w http.ResponseWriter, r *http.Request) {
-	l.info("Запрос %s от %s", r.RequestURI, r.RemoteAddr)
+	l.info("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	var groups []SimpleGroup
 	result, err := db.Query("SELECT * FROM groups")
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 		l.error("Ошибка при выполнении запроса к БД: %s", err)
 		return
 	}
@@ -186,8 +187,8 @@ func getGroups(w http.ResponseWriter, r *http.Request) {
 		var currentGroup SimpleGroup
 		err := result.Scan(&currentGroup.GroupName, &currentGroup.Institute, &currentGroup.StudyLevel, &currentGroup.StudyForm, &currentGroup.NumberOfSubgroups, &currentGroup.LastUpdate)
 		if err != nil {
-			json.NewEncoder(w).Encode(ErrorResponse{"result_scan_error", "Ошибка при формировании списка занятий."})
-			l.error("Ошибка при формировании списка занятий: %s", err)
+			json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании группы."})
+			l.error("Ошибка при формировании группы: %s", err)
 			return
 		}
 		groups = append(groups, currentGroup)
@@ -196,15 +197,90 @@ func getGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func getGroup(w http.ResponseWriter, r *http.Request) {
-	//todo
+	l.info("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
+	w.Header().Set("Content-Type", "application/json")
+	params := mux.Vars(r)
+	if !checkGroupName(params["groupName"]) {
+		l.warn("Некорректное название группы: \"%s\"!", params["groupName"])
+		json.NewEncoder(w).Encode(SimpleResponse{false, "invalid_groupName", "Некорректное название группы."})
+		return
+	}
+	resultGroup, err := db.Query("SELECT * FROM groups WHERE groupName = ?", params["groupName"])
+	if err != nil {
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
+	}
+	defer resultGroup.Close()
+	if !resultGroup.Next() {
+		l.warn("Группа не существует: \"%s\"!", params["groupName"])
+		json.NewEncoder(w).Encode(SimpleResponse{false, "groupName_does_not_exist", "Группа не существует."})
+		return
+	}
+	var group Group
+	err = resultGroup.Scan(&group.GroupName, &group.Institute, &group.StudyLevel, &group.StudyForm, &group.NumberOfSubgroups, &group.LastUpdate)
+	if err != nil {
+		json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании группы."})
+		l.error("Ошибка при формировании группы: %s", err)
+		return
+	}
+	resultClasses, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ?", params["groupName"])
+	if err != nil {
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
+	}
+	defer resultClasses.Close()
+	for resultClasses.Next() {
+		var currentClass Class
+		err := resultClasses.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
+		if err != nil {
+			json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании списка занятий."})
+			l.error("Ошибка при формировании списка занятий: %s", err)
+			return
+		}
+		group.Classes = append(group.Classes, currentClass)
+	}
+	json.NewEncoder(w).Encode(group)
 }
 
 func getClasses(w http.ResponseWriter, r *http.Request) {
-	//todo
+	l.info("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
+	w.Header().Set("Content-Type", "application/json")
+	params := mux.Vars(r)
+	if !checkGroupName(params["groupName"]) {
+		l.warn("Некорректное название группы: \"%s\"!", params["groupName"])
+		json.NewEncoder(w).Encode(SimpleResponse{false, "invalid_groupName", "Некорректное название группы."})
+		return
+	}
+	if !groupExists(params["groupName"]) {
+		l.warn("Группа не существует: \"%s\"!", params["groupName"])
+		json.NewEncoder(w).Encode(SimpleResponse{false, "groupName_does_not_exist", "Группа не существует."})
+		return
+	}
+	var classes []Class
+	resultClasses, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ?", params["groupName"])
+	if err != nil {
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
+	}
+	defer resultClasses.Close()
+	for resultClasses.Next() {
+		var currentClass Class
+		err := resultClasses.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
+		if err != nil {
+			json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании списка занятий."})
+			l.error("Ошибка при формировании списка занятий: %s", err)
+			return
+		}
+		classes = append(classes, currentClass)
+	}
+	json.NewEncoder(w).Encode(classes)
 }
 
 func getDay(w http.ResponseWriter, r *http.Request) {
-	l.info("Запрос %s от %s", r.RequestURI, r.RemoteAddr)
+	l.info("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	var day Day
 	params := mux.Vars(r)
@@ -212,22 +288,22 @@ func getDay(w http.ResponseWriter, r *http.Request) {
 	day.Date, _ = params["date"]
 	if !checkGroupName(day.GroupName) {
 		l.warn("Некорректное название группы: \"%s\"!", day.GroupName)
-		json.NewEncoder(w).Encode(ErrorResponse{"invalid_groupName", "Некорректное название группы."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "invalid_groupName", "Некорректное название группы."})
 		return
 	}
 	if !checkDate(day.Date) {
 		l.warn("Некорректная дата: \"%s\"!", day.Date)
-		json.NewEncoder(w).Encode(ErrorResponse{"invalid_date", "Некорректная дата."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "invalid_date", "Некорректная дата."})
 		return
 	}
 	if !groupExists(day.GroupName) {
 		l.warn("Группа не существует: \"%s\"!", day.GroupName)
-		json.NewEncoder(w).Encode(ErrorResponse{"groupName_does_not_exist", "Группа не существует."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "groupName_does_not_exist", "Группа не существует."})
 		return
 	}
 	result, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ? AND date = ?", day.GroupName, day.Date)
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 		l.error("Ошибка при выполнении запроса к БД: %s", err)
 		return
 	}
@@ -236,7 +312,7 @@ func getDay(w http.ResponseWriter, r *http.Request) {
 		var currentClass Class
 		err := result.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
 		if err != nil {
-			json.NewEncoder(w).Encode(ErrorResponse{"result_scan_error", "Ошибка при формировании списка занятий."})
+			json.NewEncoder(w).Encode(SimpleResponse{false, "result_scan_error", "Ошибка при формировании списка занятий."})
 			l.error("Ошибка при формировании списка занятий: %s", err)
 			return
 		}
@@ -247,35 +323,35 @@ func getDay(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateGroup(w http.ResponseWriter, r *http.Request) {
-	l.info("Запрос %s от %s", r.RequestURI, r.RemoteAddr)
+	l.info("%s %s %s", r.Method, r.RequestURI, r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
 	if !checkGroupName(params["groupName"]) {
 		l.warn("Некорректное название группы: \"%s\"!", params["groupName"])
-		json.NewEncoder(w).Encode(ErrorResponse{"invalid_groupName", "Некорректное название группы."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "invalid_groupName", "Некорректное название группы."})
 		return
 	}
 	stmt, err := db.Prepare("DELETE FROM groups WHERE groupName = ?")
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при подготовке запроса к БД."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при подготовке запроса к БД."})
 		l.error("Ошибка при подготовке запроса к БД: %s", err)
 		return
 	}
 	_, err = stmt.Exec(params["groupName"])
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 		l.error("Ошибка при выполнении запроса к БД: %s", err)
 		return
 	}
 	stmt, err = db.Prepare("INSERT INTO groups (groupName, institute, studyLevel, studyForm, numberOfSubgroups, lastUpdate) VALUES (?, ?, ?, ?, ?, ?)")
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при подготовке запроса к БД."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при подготовке запроса к БД."})
 		l.error("Ошибка при подготовке запроса к БД: %s", err)
 		return
 	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"body_read_error", "Ошибка при чтении запроса."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "body_read_error", "Ошибка при чтении запроса."})
 		l.error("Ошибка при чтении запроса: %s", err)
 		return
 	}
@@ -283,23 +359,23 @@ func updateGroup(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(body, &group)
 	_, err = stmt.Exec(group.GroupName, group.Institute, group.StudyLevel, group.StudyForm, group.NumberOfSubgroups, group.LastUpdate)
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 		l.error("Ошибка при выполнении запроса к БД: %s", err)
 		return
 	}
 	for _, class := range group.Classes {
 		stmt, err = db.Prepare("INSERT INTO classesFullTime (groupName, discipline, date, time, classType, professor, subgroup, location, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		if err != nil {
-			json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при подготовке запроса к БД."})
+			json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при подготовке запроса к БД."})
 			l.error("Ошибка при подготовке запроса к БД: %s", err)
 			return
 		}
 		_, err = stmt.Exec(group.GroupName, class.Discipline, class.Date, class.Time, class.ClassType, class.Professor, class.Subgroup, class.Location, class.Comment)
 		if err != nil {
-			json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+			json.NewEncoder(w).Encode(SimpleResponse{false, "db_query_error", "Ошибка при выполнении запроса к БД."})
 			l.error("Ошибка при выполнении запроса к БД: %s", err)
 			return
 		}
 	}
-	json.NewEncoder(w).Encode("Group has been updated.")
+	json.NewEncoder(w).Encode(SimpleResponse{true, "", "Расписание группы успешно внесено в БД."})
 }
