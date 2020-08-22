@@ -10,6 +10,8 @@ import (
 	"log"
 	"os"
 	"io"
+	"regexp"
+	//"errors"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/mux"
@@ -35,6 +37,7 @@ func (logger *logger) warn(s string, v ...interface{}) {
 }
 func (logger *logger) error(s string, v ...interface{}) {
 	logger.errorLogger.Printf(s, v...)
+	panic("Panic!")
 }
 func (logger *logger) fatal(s string, v ...interface{}) {
 	logger.fatalLogger.Printf(s, v...)
@@ -53,33 +56,49 @@ type Config struct {
 
 // Class - одна пара
 type Class struct {
-	Discipline string
-	ClassType  string
-	Date       time.Time
-	Time       string
-	Professor  string
-	Subgroup   int
-	Location   string
-	Comment    string
-	Message    string
+	Discipline string    `json:"discipline"`
+	ClassType  string    `json:"classType"`
+	Date       time.Time `json:"date"`
+	Time       string    `json:"time"`
+	Professor  string    `json:"professor"`
+	Subgroup   int       `json:"subgroup"`
+	Location   string    `json:"location"`
+	Comment    string    `json:"comment"`
+	Message    string    `json:"message"`
 }
 
 // Group - группа
 type Group struct {
-	GroupName         string
-	NumberOfSubgroups int
-	LastUpdate        time.Time
-	Institute         string
-	StudyLevel        string
-	StudyForm         string
-	Classes           []Class
+	GroupName         string    `json:"groupName"`
+	NumberOfSubgroups int       `json:"numberOfSubgroups"`
+	LastUpdate        time.Time `json:"lastUpdate"`
+	Institute         string    `json:"institute"`
+	StudyLevel        string    `json:"studyLevel"`
+	StudyForm         string    `json:"studyForm"`
+	Classes           []Class   `json:"classes"`
+}
+
+// SimpleGroup - группа (без расписания)
+type SimpleGroup struct {
+	GroupName         string    `json:"groupName"`
+	NumberOfSubgroups int       `json:"numberOfSubgroups"`
+	LastUpdate        time.Time `json:"lastUpdate"`
+	Institute         string    `json:"institute"`
+	StudyLevel        string    `json:"studyLevel"`
+	StudyForm         string    `json:"studyForm"`
 }
 
 // Day - день из расписания
 type Day struct {
-	Date      string `json:"date"`
-	GroupName string `json:"groupName"`
+	Date      string  `json:"date"`
+	GroupName string  `json:"groupName"`
 	Classes   []Class `json:"classes"`
+}
+
+// ErrorResponse - возвращаемая ошибка
+type ErrorResponse struct {
+	Err     string `json:"error"`
+	Message string `json:"message"`
 }
 
 var (
@@ -102,6 +121,7 @@ func main() {
 		errorLogger: log.New(logMultiwriter, "[ERROR] ", log.Ldate|log.Ltime),
 		fatalLogger: log.New(logMultiwriter, "[FATAL] ", log.Ldate|log.Ltime),
 	}
+	l.info("Запуск API...")
 
 	// чтение конфига
 	cfg := Config{}
@@ -109,26 +129,70 @@ func main() {
 	if err != nil {
 		l.fatal("Ошибка при чтении конфига: %s", err)
 	}
-	
+	l.info("Конфиг загружен.")
+
 	// подключение к БД
 	db, err = sql.Open("mysql", fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true", cfg.MySQLUser, cfg.MySQLPassword, cfg.MySQLURL, cfg.MySQLPort, cfg.MySQLDB))
 	if err != nil {
 		l.fatal("Ошибка при подключении к БД: %s", err)
 	}
 	defer db.Close()
+	l.info("Успешное подключение к БД.")
 	
 	// настройка роутера
 	router := mux.NewRouter()
 	router.HandleFunc("/api/groups/", getGroups).Methods("GET")
-	router.HandleFunc("/api/group/{groupName}", getGroup).Methods("GET")
+	router.HandleFunc("/api/groups/{groupName}", getGroup).Methods("GET")
 	router.HandleFunc("/api/classes/{groupName}", getClasses).Methods("GET")
 	router.HandleFunc("/api/classes/{groupName}/{date}", getDay).Methods("GET")
 	router.HandleFunc("/api/groups/{groupName}", updateGroup).Methods("POST")
 	http.ListenAndServe(":" + cfg.APIPort, router)
 }
 
+func checkGroupName(groupName string) (bool) {
+	isMatchRegexp, _ := regexp.MatchString(`^(\d{3})([а-яА-Я]{0,3})(-\d|\d)?$`, groupName)
+	return isMatchRegexp
+}
+
+func groupExists(groupName string) (bool) {
+	result, err := db.Query("SELECT groupName FROM groups WHERE groupName = ?", groupName)
+	if err != nil {
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+	}
+	defer result.Close()
+	return result.Next()
+}
+
+func checkDate(date string) (bool) {
+	_, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return false
+	}
+	return true
+}
+
 func getGroups(w http.ResponseWriter, r *http.Request) {
-	//todo
+	l.info("Запрос %s от %s", r.RequestURI, r.RemoteAddr)
+	w.Header().Set("Content-Type", "application/json")
+	var groups []SimpleGroup
+	result, err := db.Query("SELECT * FROM groups")
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
+	}
+	defer result.Close()
+	for result.Next() {
+		var currentGroup SimpleGroup
+		err := result.Scan(&currentGroup.GroupName, &currentGroup.Institute, &currentGroup.StudyLevel, &currentGroup.StudyForm, &currentGroup.NumberOfSubgroups, &currentGroup.LastUpdate)
+		if err != nil {
+			json.NewEncoder(w).Encode(ErrorResponse{"result_scan_error", "Ошибка при формировании списка занятий."})
+			l.error("Ошибка при формировании списка занятий: %s", err)
+			return
+		}
+		groups = append(groups, currentGroup)
+	}
+	json.NewEncoder(w).Encode(groups)
 }
 
 func getGroup(w http.ResponseWriter, r *http.Request) {
@@ -140,21 +204,41 @@ func getClasses(w http.ResponseWriter, r *http.Request) {
 }
 
 func getDay(w http.ResponseWriter, r *http.Request) {
+	l.info("Запрос %s от %s", r.RequestURI, r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	var day Day
 	params := mux.Vars(r)
 	day.GroupName = params["groupName"]
 	day.Date, _ = params["date"]
+	if !checkGroupName(day.GroupName) {
+		l.warn("Некорректное название группы: \"%s\"!", day.GroupName)
+		json.NewEncoder(w).Encode(ErrorResponse{"invalid_groupName", "Некорректное название группы."})
+		return
+	}
+	if !checkDate(day.Date) {
+		l.warn("Некорректная дата: \"%s\"!", day.Date)
+		json.NewEncoder(w).Encode(ErrorResponse{"invalid_date", "Некорректная дата."})
+		return
+	}
+	if !groupExists(day.GroupName) {
+		l.warn("Группа не существует: \"%s\"!", day.GroupName)
+		json.NewEncoder(w).Encode(ErrorResponse{"groupName_does_not_exist", "Группа не существует."})
+		return
+	}
 	result, err := db.Query("SELECT discipline, time, classType, professor, subgroup, location, comment, message FROM classesFullTime WHERE groupName = ? AND date = ?", day.GroupName, day.Date)
 	if err != nil {
-		panic(err.Error())
+		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
 	}
 	defer result.Close()
 	for result.Next() {
 		var currentClass Class
 		err := result.Scan(&currentClass.Discipline, &currentClass.Time, &currentClass.ClassType, &currentClass.Professor, &currentClass.Subgroup, &currentClass.Location, &currentClass.Comment, &currentClass.Message)
 		if err != nil {
-			panic(err.Error())
+			json.NewEncoder(w).Encode(ErrorResponse{"result_scan_error", "Ошибка при формировании списка занятий."})
+			l.error("Ошибка при формировании списка занятий: %s", err)
+			return
 		}
 		currentClass.Date, _ = time.Parse("2006-01-02", day.Date)
 		day.Classes = append(day.Classes, currentClass)
@@ -163,38 +247,58 @@ func getDay(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateGroup(w http.ResponseWriter, r *http.Request) {
+	l.info("Запрос %s от %s", r.RequestURI, r.RemoteAddr)
 	w.Header().Set("Content-Type", "application/json")
 	params := mux.Vars(r)
+	if !checkGroupName(params["groupName"]) {
+		l.warn("Некорректное название группы: \"%s\"!", params["groupName"])
+		json.NewEncoder(w).Encode(ErrorResponse{"invalid_groupName", "Некорректное название группы."})
+		return
+	}
 	stmt, err := db.Prepare("DELETE FROM groups WHERE groupName = ?")
 	if err != nil {
-		panic(err.Error())
+		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при подготовке запроса к БД."})
+		l.error("Ошибка при подготовке запроса к БД: %s", err)
+		return
 	}
 	_, err = stmt.Exec(params["groupName"])
 	if err != nil {
-		panic(err.Error())
+		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
 	}
 	stmt, err = db.Prepare("INSERT INTO groups (groupName, institute, studyLevel, studyForm, numberOfSubgroups, lastUpdate) VALUES (?, ?, ?, ?, ?, ?)")
 	if err != nil {
-		panic(err.Error())
+		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при подготовке запроса к БД."})
+		l.error("Ошибка при подготовке запроса к БД: %s", err)
+		return
 	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		panic(err.Error())
+		json.NewEncoder(w).Encode(ErrorResponse{"body_read_error", "Ошибка при чтении запроса."})
+		l.error("Ошибка при чтении запроса: %s", err)
+		return
 	}
 	var group Group
 	json.Unmarshal(body, &group)
 	_, err = stmt.Exec(group.GroupName, group.Institute, group.StudyLevel, group.StudyForm, group.NumberOfSubgroups, group.LastUpdate)
 	if err != nil {
-		panic(err.Error())
+		json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+		l.error("Ошибка при выполнении запроса к БД: %s", err)
+		return
 	}
 	for _, class := range group.Classes {
 		stmt, err = db.Prepare("INSERT INTO classesFullTime (groupName, discipline, date, time, classType, professor, subgroup, location, comment) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		if err != nil {
-			panic(err.Error())
+			json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при подготовке запроса к БД."})
+			l.error("Ошибка при подготовке запроса к БД: %s", err)
+			return
 		}
 		_, err = stmt.Exec(group.GroupName, class.Discipline, class.Date, class.Time, class.ClassType, class.Professor, class.Subgroup, class.Location, class.Comment)
 		if err != nil {
-			panic(err.Error())
+			json.NewEncoder(w).Encode(ErrorResponse{"db_query_error", "Ошибка при выполнении запроса к БД."})
+			l.error("Ошибка при выполнении запроса к БД: %s", err)
+			return
 		}
 	}
 	json.NewEncoder(w).Encode("Group has been updated.")
