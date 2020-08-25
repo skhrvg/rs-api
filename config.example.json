@@ -1,8 +1,9 @@
 {
-  "APIPort": "",
+  "APIPort": "8888",
   "MySQLUser": "",
   "MySQLPassword": "",
-  "MySQLURL": "",
-  "MySQLPort": "",
-  "MySQLDB": ""
+  "MySQLURL": "example.com",
+  "MySQLPort": "3306",
+  "MySQLDB": "rs",
+  "APIPrefix": "/api/"
 }

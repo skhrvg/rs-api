@@ -52,6 +52,7 @@ type Config struct {
 	MySQLURL      string
 	MySQLPort     string
 	MySQLDB       string
+	APIPrefix     string
 }
 
 // Class - одна пара
@@ -142,11 +143,11 @@ func main() {
 	
 	// настройка роутера
 	router := mux.NewRouter()
-	router.HandleFunc("/api/groups/", getGroups).Methods("GET")
-	router.HandleFunc("/api/groups/{groupName}", getGroup).Methods("GET")
-	router.HandleFunc("/api/classes/{groupName}", getClasses).Methods("GET")
-	router.HandleFunc("/api/classes/{groupName}/{date}", getDay).Methods("GET")
-	router.HandleFunc("/api/groups/{groupName}", updateGroup).Methods("POST")
+	router.HandleFunc(cfg.APIPrefix + "groups/", getGroups).Methods("GET")
+	router.HandleFunc(cfg.APIPrefix + "groups/{groupName}", getGroup).Methods("GET")
+	router.HandleFunc(cfg.APIPrefix + "classes/{groupName}", getClasses).Methods("GET")
+	router.HandleFunc(cfg.APIPrefix + "classes/{groupName}/{date}", getDay).Methods("GET")
+	router.HandleFunc(cfg.APIPrefix + "groups/{groupName}", updateGroup).Methods("POST")
 	http.ListenAndServe(":" + cfg.APIPort, router)
 }
 
